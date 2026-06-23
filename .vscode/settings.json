@@ -1,0 +1,9 @@
+{
+    "editor.formatOnSave": true,
+    "tlaplus.tlc.modelChecker.options": "-workers 18 -coverage 1",
+    "[tlaplus]": {
+        "editor.formatOnSave": false,
+        "editor.formatOnType": false,
+        "editor.formatOnPaste": false
+    }
+}
