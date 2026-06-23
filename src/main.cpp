@@ -5,16 +5,19 @@
 #include <cstring>
 #include <vector>
 #include <span>
+#include <random>
 
 using namespace db7;
 
-int main()
+static inline u64 now_ns()
 {
-    fmt::print("Hello, {}!\n", "world");
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    return u64(ts.tv_sec) * 1000000000ull + ts.tv_nsec;
+}
 
-    u32 n = 1;
-
-    std::vector<Key> strs(n);
+void prep_keys(std::vector<Key> &strs, u32 n)
+{
     for (u32 i = 0; i < n; i++)
     {
         std::string s = "kEY_ⅶ_⎞_Љ_۝_" + std::to_string(i + 1);
@@ -31,16 +34,42 @@ int main()
         strs[i].encoded = buf;
         strs[i].enc_len = (u16)(len);
     }
+}
 
-    PagePool pool(200);
+int main()
+{
+    fmt::print("Hello, {}!\n", "world");
 
-    auto btree = BTreeIndex<Key, u64>(&pool);
+    u32 n = 1'000'000;
+
+    using typ = Key;
+
+    // std::vector<typ> strs(n);
+    // for (u32 i = 0; i < n; i++)
+    //     strs[i] = i;
+
+    std::vector<Key> strs(n);
+    prep_keys(strs, n);
+    std::shuffle(strs.begin(), strs.end(), std::mt19937{42});
+
+    PagePool pool(80000);
+
+    auto btree = BTreeIndex<typ, u64>(&pool);
+
+    u64 t0 = now_ns();
 
     for (u32 i = 0; i < n; i++)
     {
         btree.Insert(strs[i], 5);
-        fmt::print("{}", btree.Get(strs[i]));
+        if (5 != btree.Get(strs[i]))
+        {
+            throw std::runtime_error("yes");
+        }
     }
+
+    u64 t1 = now_ns();
+
+    printf("insert:        %.3f ms\n", (t1 - t0) / 1e6);
 
     return 0;
 }

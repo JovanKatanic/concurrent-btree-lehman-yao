@@ -6,25 +6,28 @@
 #include "btree/header.hpp"
 #include "layouts/varlen/varlen_layout_intermediate.hpp"
 #include "layouts/varlen/varlen_layout_leaf.hpp"
+#include "layouts/fixed/fixed_layout_intermediate.hpp"
+#include "layouts/fixed/fixed_layout_leaf.hpp"
 
 #include <atomic>
 #include <mutex>
 
 namespace db7
 {
-    // using Key = u64;
-    // using Value = u64;
-    template <typename Key, typename Value>
+
+    template <typename KeyTyp, typename Value>
     class BTreeIndex
     {
         // TODO assert Value is correct type
+
     private:
         std::mutex root_mtx_;
         std::atomic<page_id> root_id_;
         PagePool *page_pool_;
 
-        using InterLayout = BtreeVarlenLayoutIntermediate;
-        using LeafLayout = BtreeVarlenLayoutLeaf;
+        static constexpr bool IS_VARLEN = std::is_same_v<KeyTyp, Key>;
+        using LeafLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutLeaf, BtreeNumberLayoutLeaf<KeyTyp>>;
+        using InterLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutIntermediate, BtreeNumberLayoutIntermediate<KeyTyp>>;
 
         InterLayout layout_inter_;
         LeafLayout layout_leaf_;
@@ -49,7 +52,7 @@ namespace db7
             return page_pool_->Reserve();
         }
 
-        void CreateNewRoot(u8 level, Key key, page_id pid, page_id new_pid)
+        void CreateNewRoot(u8 level, KeyTyp key, page_id pid, page_id new_pid)
         {
             Page *new_root_page = ReserveNode();
 
@@ -64,7 +67,7 @@ namespace db7
             ReleaseNode<LockMode::None>(new_root_page);
         }
 
-        Key SplitLeaf(byte *data, page_id &new_pid, Key key, Value value)
+        KeyTyp SplitLeaf(byte *data, page_id &new_pid, KeyTyp key, Value value)
         {
             auto *right_page = ReserveNode();
 
@@ -72,14 +75,14 @@ namespace db7
 
             byte *right_data = right_page->GetData();
 
-            Key sentinel = layout_leaf_.Split(data, right_data, new_pid, key, value);
+            KeyTyp sentinel = layout_leaf_.Split(data, right_data, new_pid, key, value);
 
             ReleaseNode<LockMode::None>(right_page);
 
             return sentinel;
         }
 
-        Key SplitInter(byte *data, page_id &new_pid, Key key, page_id value)
+        KeyTyp SplitInter(byte *data, page_id &new_pid, KeyTyp key, page_id value)
         {
             auto *right_page = ReserveNode();
 
@@ -87,14 +90,14 @@ namespace db7
 
             byte *right_data = right_page->GetData();
 
-            Key sentinel = layout_inter_.Split(data, right_data, new_pid, key, value);
+            KeyTyp sentinel = layout_inter_.Split(data, right_data, new_pid, key, value);
 
             ReleaseNode<LockMode::None>(right_page);
 
             return sentinel;
         }
 
-        Page *GoRightInter(Page *page, Key key)
+        Page *GoRightInter(Page *page, KeyTyp key)
         {
             constexpr LockMode LM = LockMode::Write;
             do
@@ -118,7 +121,7 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-        Page *GoRightLeaf(Page *page, Key key)
+        Page *GoRightLeaf(Page *page, KeyTyp key)
         {
             constexpr LockMode LM = LockMode::Write;
             do
@@ -147,7 +150,7 @@ namespace db7
             return root_id_.load();
         }
 
-        Page *DropToLevel(Key key)
+        Page *DropToLevel(KeyTyp key)
         {
             page_id pid = GetRoot();
             DB7_ASSERT(pid != std::numeric_limits<page_id>::max(), "invalid pid");
@@ -206,7 +209,7 @@ namespace db7
             return nullptr;
         }
 
-        void DropToLevel(Key key, u8 drop_level)
+        void DropToLevel(KeyTyp key, u8 drop_level)
         {
             page_id pid = GetRoot();
             DB7_ASSERT(pid != std::numeric_limits<page_id>::max(), "invalid pid");
@@ -264,7 +267,7 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-        bool InsertInternal(Page *page, Key key, Value value)
+        bool InsertInternal(Page *page, KeyTyp key, Value value)
         {
             Lock<LockMode::Write>(page);
 
@@ -280,7 +283,7 @@ namespace db7
             else
             {
                 page_id new_pid;
-                Key sentinel = SplitLeaf(data, new_pid, key, value);
+                KeyTyp sentinel = SplitLeaf(data, new_pid, key, value);
                 u8 level = GetLevel(data);
                 ReleaseNode<LockMode::Write>(page);
 
@@ -308,7 +311,7 @@ namespace db7
             return true;
         }
 
-        bool PropagateInsert(Key key, page_id value)
+        bool PropagateInsert(KeyTyp key, page_id value)
         {
             while (!TlState::IsEmpty())
             {
@@ -332,7 +335,7 @@ namespace db7
                 {
                     page_id new_pid;
 
-                    // Key old_key = key;
+                    // KeyTyp old_key = key;
                     key = SplitInter(data, new_pid, key, value);
                     // delete[] old_key.encoded;
 
@@ -361,7 +364,7 @@ namespace db7
             return true;
         }
 
-        Value InternalGet(Page *page, Key key)
+        Value InternalGet(Page *page, KeyTyp key)
         {
             DB7_ASSERT(page->GetId() != std::numeric_limits<page_id>::max(), "invalid pid");
             auto *data = page->GetData();
@@ -414,7 +417,7 @@ namespace db7
 
         ~BTreeIndex() = default;
 
-        bool Insert(Key key, Value value)
+        bool Insert(KeyTyp key, Value value)
         {
             TlState::Clear();
             Page *page = DropToLevel(key);
@@ -423,7 +426,7 @@ namespace db7
 
         bool Delete(/* ... */) { return false; }
 
-        Value Get(Key key)
+        Value Get(KeyTyp key)
         {
             TlState::Clear();
             auto *page = DropToLevel(key);
