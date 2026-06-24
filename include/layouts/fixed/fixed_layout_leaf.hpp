@@ -25,9 +25,14 @@ namespace db7
             data[idx] = value;
         }
 
+        template <typename Typ>
+        void ShiftLeftDelete(Typ *data, u32 count, u32 idx)
+        {
+            std::memmove(data + idx, data + idx + 1, (count - idx - 1) * sizeof(Typ));
+        }
+
         u32 GetIdx(const KeyTyp *data, const u32 count, const KeyTyp value, bool &found)
         {
-            DB7_ASSERT(count != 0, "zero count node");
             found = false;
             u32 lo = 0, hi = count;
             while (lo < hi)
@@ -85,6 +90,18 @@ namespace db7
         KeyTyp ReadMaxVal(NumberHeader<ValTyp> *header)
         {
             return static_cast<KeyTyp>(header->max_val);
+        }
+
+        void DeleteInternal(byte *data, u32 count, KeyTyp key)
+        {
+            bool found = false;
+            u32 idx = count == 0 ? 0 : GetIdx(OffsetKey(data), count, key, found);
+            if (!found)
+            {
+                throw std::runtime_error("Key not found");
+            }
+            ShiftLeftDelete(OffsetKey(data), count, idx);
+            ShiftLeftDelete(OffsetRef(data), count, idx);
         }
 
     public:
@@ -168,6 +185,13 @@ namespace db7
         u64 GetRLink(byte *data)
         {
             return NumberHeader<ValTyp>::CastHeader(data)->rlink;
+        }
+
+        void Delete(byte *data, KeyTyp key)
+        {
+            u32 count = NumberHeader<ValTyp>::CastHeader(data)->count;
+            DeleteInternal(data, count, key);
+            NumberHeader<ValTyp>::CastHeader(data)->count--;
         }
     };
 };

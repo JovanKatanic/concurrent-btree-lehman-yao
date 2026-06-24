@@ -404,6 +404,21 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
+        bool DeleteInternal(Page *page, KeyTyp key)
+        {
+            Lock<LockMode::Write>(page);
+
+            page = GoRightLeaf(page, key);
+
+            byte *data = page->GetData();
+
+            layout_leaf_.Delete(data, key);
+
+            Unlock<LockMode::Write>(page);
+
+            return true;
+        }
+
     public:
         BTreeIndex(PagePool *page_pool)
             : root_id_(0), page_pool_(page_pool), layout_inter_(), layout_leaf_()
@@ -424,7 +439,12 @@ namespace db7
             return InsertInternal(page, key, value);
         }
 
-        bool Delete(/* ... */) { return false; }
+        bool Delete(KeyTyp key)
+        {
+            TlState::Clear();
+            Page *page = DropToLevel(key);
+            return DeleteInternal(page, key);
+        }
 
         ValTyp Get(KeyTyp key)
         {

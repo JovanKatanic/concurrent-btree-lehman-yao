@@ -30,6 +30,7 @@ namespace db7
     struct VarlenHeader : public BaseLyHeader<Typ>
     {
         u32 heap_size;
+        u32 dead_space;
         u32 prefix_offset;
         u16 prefix_len;
 
@@ -49,6 +50,8 @@ namespace db7
 
             this->prefix_offset = prefix_offset;
             this->prefix_len = prefix_len;
+
+            this->dead_space = 0;
         }
 
         static void WriteHeader(byte *data, Typ pid, Typ rlink, Typ llink, u32 count, u8 level, u64 max_val, u32 prefix_offset, u16 prefix_len)

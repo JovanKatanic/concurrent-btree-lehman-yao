@@ -12,6 +12,8 @@
 
 namespace db7
 {
+#define DB7_MAX_SLOTS_PER_PAGE (DB7_PAGE_SIZE - sizeof(VarlenHeader<ValTyp>)) / sizeof(u32)
+
     template <typename ValTyp>
     class BtreeVarlenLayoutLeaf
     {
@@ -23,6 +25,12 @@ namespace db7
         {
             std::memmove(data + idx + 1, data + idx, (count - idx) * sizeof(Typ));
             data[idx] = value;
+        }
+
+        template <typename Typ>
+        void ShiftLeftDelete(Typ *data, u32 count, u32 idx)
+        {
+            std::memmove(data + idx, data + idx + 1, (count - idx - 1) * sizeof(Typ));
         }
 
         int Cmp(byte *slot, Key key)
@@ -158,12 +166,10 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-#define DB7_MAX_SLOTS_PER_PAGE (DB7_PAGE_SIZE - sizeof(VarlenHeader<ValTyp>)) / sizeof(u32)
-
         void CompactHeap(byte *data, Slot *slots, u32 count, u32 prefix_len)
         {
             // sort slot indices by offset descending (highest first = end of page)
-            u32 indices[DB7_MAX_SLOTS_PER_PAGE];
+            u32 indices[DB7_MAX_SLOTS_PER_PAGE]; // TODO move to heap
             for (u32 i = 0; i < count; i++)
                 indices[i] = i;
 
@@ -292,6 +298,32 @@ namespace db7
             }
         }
 
+        void DeleteInternal(byte *data, Key key)
+        {
+            auto *header = VarlenHeader<ValTyp>::CastHeader(data);
+            Slot *slots = OffsetHeader(data);
+            u32 count = header->count;
+
+            bool found = false;
+            u32 idx = GetIdx(data, count, key, found);
+            if (!found)
+            {
+                throw std::runtime_error("Key not found");
+            }
+
+            SlotValHeader<ValTyp> *hdr = CastSlotHeader(ReadSlot(data, slots[idx]));
+            header->dead_space += AlignUp((sizeof(SlotValHeader<ValTyp>) + hdr->len), alignof(SlotValHeader<ValTyp>));
+
+            ShiftLeftDelete(slots, count, idx);
+
+            count--;
+
+            header->count = count;
+
+            if (header->dead_space > DB7_PAGE_SIZE / 4)
+                CompactHeap(data, slots, count, header->prefix_len);
+        }
+
     public:
         static constexpr ValTyp UNDEFINED = std::numeric_limits<ValTyp>::max();
         static constexpr u32 UNDEFINED_OFFSET = std::numeric_limits<u32>::max();
@@ -306,6 +338,7 @@ namespace db7
             Key new_key = RemoveKeyPrefix(data, key);
 
             Slot *slots = OffsetHeader(data);
+
             bool found = false;
             u32 idx = GetIdx(data, count, new_key, found);
             if (found)
@@ -313,6 +346,7 @@ namespace db7
                 SlotVal val = CastSlot(ReadSlot(data, slots[idx]));
                 return val.hdr.result;
             }
+
             return UNDEFINED;
         }
 
@@ -482,6 +516,15 @@ namespace db7
         u64 GetRLink(byte *data)
         {
             return VarlenHeader<ValTyp>::CastHeader(data)->rlink;
+        }
+
+        void Delete(byte *data, Key key)
+        {
+            DB7_ASSERT(key.data != nullptr, "invalid key");
+            DB7_ASSERT(key.len != 0, "invalid key");
+
+            Key new_key = RemoveKeyPrefix(data, key);
+            DeleteInternal(data, new_key);
         }
     };
 }

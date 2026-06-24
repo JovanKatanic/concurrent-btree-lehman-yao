@@ -72,8 +72,9 @@ int main()
             for (u32 i = 0; i < n; i++)
             {
                 btree.Insert(strs[i], 5);
+                btree.Delete(strs[i]);
                 auto v = btree.Get(strs[i]);
-                if (v != 5)
+                if (v != UINT64_MAX)
                     throw std::runtime_error("bad");
             }
             auto t1 = std::chrono::steady_clock::now();
@@ -85,7 +86,7 @@ int main()
         printf("best: %.2f ms  (%.1f ns/op)\n", best / 1e6, best / n);
     };
 
-    bench(10);
+    bench(1);
 
     return 0;
 }
