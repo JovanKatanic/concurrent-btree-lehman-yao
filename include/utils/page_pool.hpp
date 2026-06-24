@@ -24,6 +24,11 @@ namespace db7
             }
         }
 
+        ~PagePool()
+        {
+            delete[] pages_;
+        }
+
         Page *Reserve() { return pages_ + (next_free_++); }
 
         Page *Get(u64 pid)

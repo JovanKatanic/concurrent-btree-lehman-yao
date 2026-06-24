@@ -15,10 +15,10 @@
 namespace db7
 {
 
-    template <typename KeyTyp, typename Value>
+    template <typename KeyTyp, typename ValTyp>
     class BTreeIndex
     {
-        // TODO assert Value is correct type
+        // TODO assert ValTyp is correct type
 
     private:
         std::mutex root_mtx_;
@@ -26,8 +26,8 @@ namespace db7
         PagePool *page_pool_;
 
         static constexpr bool IS_VARLEN = std::is_same_v<KeyTyp, Key>;
-        using LeafLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutLeaf, BtreeNumberLayoutLeaf<KeyTyp>>;
-        using InterLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutIntermediate, BtreeNumberLayoutIntermediate<KeyTyp>>;
+        using LeafLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutLeaf<ValTyp>, BtreeNumberLayoutLeaf<KeyTyp, ValTyp>>;
+        using InterLayout = std::conditional_t<IS_VARLEN, BtreeVarlenLayoutIntermediate<page_id>, BtreeNumberLayoutIntermediate<KeyTyp, page_id>>;
 
         InterLayout layout_inter_;
         LeafLayout layout_leaf_;
@@ -67,7 +67,7 @@ namespace db7
             ReleaseNode<LockMode::None>(new_root_page);
         }
 
-        KeyTyp SplitLeaf(byte *data, page_id &new_pid, KeyTyp key, Value value)
+        KeyTyp SplitLeaf(byte *data, page_id &new_pid, KeyTyp key, ValTyp value)
         {
             auto *right_page = ReserveNode();
 
@@ -157,12 +157,12 @@ namespace db7
 
             Page *page = GetNode<LockMode::None>(pid);
             auto *data = page->GetData();
-            u8 level = GetLevel(data);
+            u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
 
             do
             {
                 DB7_ASSERT(pid != std::numeric_limits<page_id>::max(), "invalid pid");
-                DB7_ASSERT(level == GetLevel(data), "invalid level node");
+                DB7_ASSERT(level == BaseLyHeader<ValTyp>::GetLevel(data), "invalid level node");
 
                 constexpr LockMode LM = LockMode::Optimistic;
                 Lock<LM>(page);
@@ -185,7 +185,7 @@ namespace db7
                 }
                 else
                 {
-                    page_id new_pid = layout_inter_.Get(data, GetCount(data), key);
+                    page_id new_pid = layout_inter_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
 
                     if (!Unlock<LM>(page))
                         continue;
@@ -216,12 +216,12 @@ namespace db7
 
             Page *page = GetNode<LockMode::None>(pid);
             auto *data = page->GetData();
-            u8 level = GetLevel(data);
+            u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
 
             do
             {
                 DB7_ASSERT(pid != std::numeric_limits<page_id>::max(), "invalid pid");
-                DB7_ASSERT(level == GetLevel(data), "invalid level node");
+                DB7_ASSERT(level == BaseLyHeader<ValTyp>::GetLevel(data), "invalid level node");
 
                 constexpr LockMode LM = LockMode::Optimistic;
                 Lock<LM>(page);
@@ -246,7 +246,7 @@ namespace db7
                 }
                 else
                 {
-                    page_id new_pid = layout_inter_.Get(data, GetCount(data), key);
+                    page_id new_pid = layout_inter_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
 
                     if (!Unlock<LM>(page))
                         continue;
@@ -267,7 +267,7 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-        bool InsertInternal(Page *page, KeyTyp key, Value value)
+        bool InsertInternal(Page *page, KeyTyp key, ValTyp value)
         {
             Lock<LockMode::Write>(page);
 
@@ -284,7 +284,7 @@ namespace db7
             {
                 page_id new_pid;
                 KeyTyp sentinel = SplitLeaf(data, new_pid, key, value);
-                u8 level = GetLevel(data);
+                u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
                 ReleaseNode<LockMode::Write>(page);
 
                 if (TlState::IsEmpty())
@@ -340,7 +340,7 @@ namespace db7
                     // delete[] old_key.encoded;
 
                     value = new_pid;
-                    u8 level = GetLevel(data);
+                    u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
                     ReleaseNode<LM>(page);
 
                     if (TlState::IsEmpty())
@@ -364,7 +364,7 @@ namespace db7
             return true;
         }
 
-        Value InternalGet(Page *page, KeyTyp key)
+        ValTyp InternalGet(Page *page, KeyTyp key)
         {
             DB7_ASSERT(page->GetId() != std::numeric_limits<page_id>::max(), "invalid pid");
             auto *data = page->GetData();
@@ -390,7 +390,7 @@ namespace db7
                 }
                 else
                 {
-                    page_id result = layout_leaf_.Get(data, GetCount(data), key);
+                    page_id result = layout_leaf_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
 
                     if (!Unlock<LM>(page))
                         continue;
@@ -417,7 +417,7 @@ namespace db7
 
         ~BTreeIndex() = default;
 
-        bool Insert(KeyTyp key, Value value)
+        bool Insert(KeyTyp key, ValTyp value)
         {
             TlState::Clear();
             Page *page = DropToLevel(key);
@@ -426,7 +426,7 @@ namespace db7
 
         bool Delete(/* ... */) { return false; }
 
-        Value Get(KeyTyp key)
+        ValTyp Get(KeyTyp key)
         {
             TlState::Clear();
             auto *page = DropToLevel(key);

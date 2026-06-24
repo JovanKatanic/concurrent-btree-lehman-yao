@@ -26,11 +26,36 @@ namespace db7
         return Key{0, nullptr, enc_len, encoded};
     }
 
-    struct VarlenHeader : public BaseLyHeader
+    template <typename Typ>
+    struct VarlenHeader : public BaseLyHeader<Typ>
     {
         u32 heap_size;
         u32 prefix_offset;
         u16 prefix_len;
+
+        static VarlenHeader<Typ> *CastHeader(byte *data)
+        {
+            return reinterpret_cast<VarlenHeader<Typ> *>(data);
+        }
+
+        void WriteHeader(Typ pid, Typ rlink, Typ llink, u32 count, u8 level, u64 max_val, u32 prefix_offset, u16 prefix_len)
+        {
+            this->pid = pid;
+            this->rlink = rlink;
+            this->llink = llink;
+            this->count = count;
+            this->level = level;
+            this->max_val = max_val;
+
+            this->prefix_offset = prefix_offset;
+            this->prefix_len = prefix_len;
+        }
+
+        static void WriteHeader(byte *data, Typ pid, Typ rlink, Typ llink, u32 count, u8 level, u64 max_val, u32 prefix_offset, u16 prefix_len)
+        {
+            auto *header = CastHeader(data);
+            header->WriteHeader(pid, rlink, llink, count, level, max_val, prefix_offset, prefix_len);
+        }
     };
 
     struct Slot

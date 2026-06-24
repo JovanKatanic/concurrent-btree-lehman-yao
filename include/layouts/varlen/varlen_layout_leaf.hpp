@@ -12,37 +12,11 @@
 
 namespace db7
 {
-
+    template <typename ValTyp>
     class BtreeVarlenLayoutLeaf
     {
-        using R = u64;
-
     private:
         u64 key_offset_;
-
-        VarlenHeader *CastHeader(byte *data)
-        {
-            return reinterpret_cast<VarlenHeader *>(data);
-        }
-
-        void WriteHeader(VarlenHeader *header, page_id pid, u64 rlink, u64 llink, u32 count, u8 level, u64 max_val, u32 prefix_offset, u16 prefix_len)
-        {
-            header->pid = pid;
-            header->rlink = rlink;
-            header->llink = llink;
-            header->count = count;
-            header->level = level;
-            header->max_val = max_val;
-
-            header->prefix_offset = prefix_offset;
-            header->prefix_len = prefix_len;
-        }
-
-        void WriteHeader(byte *data, page_id pid, u64 rlink, u64 llink, u32 count, u8 level, u64 max_val, u32 prefix_offset, u16 prefix_len)
-        {
-            auto *header = CastHeader(data);
-            WriteHeader(header, pid, rlink, llink, count, level, max_val, prefix_offset, prefix_len);
-        }
 
         template <typename Typ>
         void ShiftRightInsert(Typ *data, u32 count, u32 idx, Typ value)
@@ -53,7 +27,7 @@ namespace db7
 
         int Cmp(byte *slot, Key key)
         {
-            SlotVal<R> val = CastSlot(slot);
+            SlotVal<ValTyp> val = CastSlot(slot);
             u16 len = val.hdr.len;
             u32 min_len = std::min(key.len, len);
             int cmp = std::memcmp(val.data, key.data, min_len);
@@ -81,12 +55,12 @@ namespace db7
             return data + offset;
         }
 
-        SlotValHeader<R> *CastSlotHeader(void *slot)
+        SlotValHeader<ValTyp> *CastSlotHeader(void *slot)
         {
-            return reinterpret_cast<SlotValHeader<R> *>(slot);
+            return reinterpret_cast<SlotValHeader<ValTyp> *>(slot);
         }
 
-        SlotVal<R> CastSlot(void *slot)
+        SlotVal<ValTyp> CastSlot(void *slot)
         {
             auto hdr = *CastSlotHeader(slot);
             return SlotVal{hdr, static_cast<byte *>(slot) + sizeof(hdr)};
@@ -99,7 +73,7 @@ namespace db7
 
         u32 CalcWorstCaseSize(Key key)
         {
-            return key.len + sizeof(SlotValHeader<R>) + alignof(SlotValHeader<R>);
+            return key.len + sizeof(SlotValHeader<ValTyp>) + alignof(SlotValHeader<ValTyp>);
         }
 
         u32 GetIdx(byte *data, const u32 count, const Key key, bool &found)
@@ -125,16 +99,16 @@ namespace db7
 
         void UpdateHeapSize(byte *data, u32 val)
         {
-            VarlenHeader *hdr = CastHeader(data);
+            auto *hdr = VarlenHeader<ValTyp>::CastHeader(data);
             hdr->heap_size = val;
         }
 
         /* includes slot header */
         u32 ReserveSlot(byte *data, u32 len)
         {
-            u32 heap_size = CastHeader(data)->heap_size;
+            u32 heap_size = VarlenHeader<ValTyp>::CastHeader(data)->heap_size;
             DB7_ASSERT(heap_size < DB7_PAGE_SIZE, "heap overflow");
-            u32 off = AlignDown(DB7_PAGE_SIZE - heap_size - len - sizeof(SlotValHeader<R>), alignof(SlotValHeader<R>));
+            u32 off = AlignDown(DB7_PAGE_SIZE - heap_size - len - sizeof(SlotValHeader<ValTyp>), alignof(SlotValHeader<ValTyp>));
             UpdateHeapSize(data, DB7_PAGE_SIZE - off);
             return off;
         }
@@ -142,7 +116,7 @@ namespace db7
         /* doesnt include slot header */
         u32 ReserveSlotRaw(byte *data, u32 len)
         {
-            u32 heap_size = CastHeader(data)->heap_size;
+            u32 heap_size = VarlenHeader<ValTyp>::CastHeader(data)->heap_size;
             DB7_ASSERT(heap_size < DB7_PAGE_SIZE, "heap overflow");
             u32 off = DB7_PAGE_SIZE - heap_size - len;
             UpdateHeapSize(data, DB7_PAGE_SIZE - off);
@@ -150,32 +124,32 @@ namespace db7
         }
 
         /* Insert to heap */
-        u32 AppendHeap(byte *data, Key key, R value)
+        u32 AppendHeap(byte *data, Key key, ValTyp value)
         {
             u32 off = ReserveSlot(data, key.len);
 
             DB7_ASSERT(off > 0 && off < DB7_PAGE_SIZE, "heap overflow");
 
-            SlotValHeader<R> *hdr = CastSlotHeader(data + off);
+            SlotValHeader<ValTyp> *hdr = CastSlotHeader(data + off);
             hdr->result = value;
             hdr->len = key.len;
-            std::memcpy(data + off + sizeof(SlotValHeader<R>), key.data, key.len);
+            std::memcpy(data + off + sizeof(SlotValHeader<ValTyp>), key.data, key.len);
 
             return off;
         }
 
         u32 FindSplitPoint(byte *data, Slot *slots, u32 count)
         {
-            VarlenHeader *var_hdr = CastHeader(data);
+            auto *var_hdr = VarlenHeader<ValTyp>::CastHeader(data);
             u32 target = var_hdr->heap_size / 2;
             u32 accumulated = 0;
 
             for (u32 i = 0; i < count; i++)
             {
-                SlotValHeader<R> *hdr = CastSlotHeader(ReadSlot(data, slots[i]));
+                SlotValHeader<ValTyp> *hdr = CastSlotHeader(ReadSlot(data, slots[i]));
                 u32 entry_size = AlignUp(
-                    (u32)(sizeof(SlotValHeader<R>) + hdr->len),
-                    (u32)alignof(SlotValHeader<R>));
+                    (u32)(sizeof(SlotValHeader<ValTyp>) + hdr->len),
+                    (u32)alignof(SlotValHeader<ValTyp>));
                 accumulated += entry_size;
                 if (accumulated >= target)
                     return i + 1;
@@ -184,10 +158,12 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
+#define DB7_MAX_SLOTS_PER_PAGE (DB7_PAGE_SIZE - sizeof(VarlenHeader<ValTyp>)) / sizeof(u32)
+
         void CompactHeap(byte *data, Slot *slots, u32 count, u32 prefix_len)
         {
             // sort slot indices by offset descending (highest first = end of page)
-            u32 indices[count];
+            u32 indices[DB7_MAX_SLOTS_PER_PAGE];
             for (u32 i = 0; i < count; i++)
                 indices[i] = i;
 
@@ -198,12 +174,12 @@ namespace db7
             for (u32 i = 0; i < count; i++)
             {
                 u32 idx = indices[i];
-                SlotVal<R> val = CastSlot(ReadSlot(data, slots[idx]));
+                SlotVal<ValTyp> val = CastSlot(ReadSlot(data, slots[idx]));
 
-                u32 entry_size = sizeof(SlotValHeader<R>) + val.hdr.len - prefix_len;
-                u32 off = AlignDown(DB7_PAGE_SIZE - write_pos - entry_size, alignof(SlotValHeader<R>));
+                u32 entry_size = sizeof(SlotValHeader<ValTyp>) + val.hdr.len - prefix_len;
+                u32 off = AlignDown(DB7_PAGE_SIZE - write_pos - entry_size, alignof(SlotValHeader<ValTyp>));
 
-                std::memmove(data + off + sizeof(SlotValHeader<R>), val.data + prefix_len, val.hdr.len - prefix_len);
+                std::memmove(data + off + sizeof(SlotValHeader<ValTyp>), val.data + prefix_len, val.hdr.len - prefix_len);
                 auto *new_hdr = CastSlotHeader(data + off);
                 new_hdr->len = val.hdr.len - prefix_len;
                 new_hdr->result = val.hdr.result;
@@ -218,8 +194,8 @@ namespace db7
         Key ReadKey(byte *data, Slot slot)
         {
             byte *ptr = ReadSlot(data, slot);
-            SlotValHeader<R> *hdr = CastSlotHeader(ptr);
-            return Key{hdr->len, ptr + sizeof(SlotValHeader<R>)};
+            SlotValHeader<ValTyp> *hdr = CastSlotHeader(ptr);
+            return Key{hdr->len, ptr + sizeof(SlotValHeader<ValTyp>)};
         }
 
         Key ReadKey(byte *data, u32 offset)
@@ -237,13 +213,13 @@ namespace db7
 
         Key RemoveKeyPrefix(byte *data, Key key)
         {
-            auto *header = CastHeader(data);
+            auto *header = VarlenHeader<ValTyp>::CastHeader(data);
             u16 len = header->prefix_len;
             DB7_ASSERT(key.enc_len >= len, "key shorter than page prefix");
             return Key{static_cast<u16>(key.len - len), key.data + len};
         }
 
-        void InsertInternal(byte *data, u32 count, Key key, R value)
+        void InsertInternal(byte *data, u32 count, Key key, ValTyp value)
         {
             Slot *slots = OffsetHeader(data);
 
@@ -261,14 +237,14 @@ namespace db7
             ShiftRightInsert(slots, count, idx, slot); // TODO this should increment header count
         }
 
-        R ReadMaxVal(VarlenHeader *header)
+        u32 ReadMaxVal(VarlenHeader<ValTyp> *header)
         {
-            return header->max_val;
+            return static_cast<u32>(header->max_val);
         }
 
         std::unique_ptr<byte[]> CopyPrefixSlot(byte *data)
         {
-            auto header = CastHeader(data);
+            auto header = VarlenHeader<ValTyp>::CastHeader(data);
             if (header->prefix_offset != UNDEFINED_OFFSET)
             {
                 byte *ptr = ReadSlot(data, header->prefix_offset);
@@ -302,26 +278,27 @@ namespace db7
             return i;
         }
 
-        SlotVal<R> GetMaxValSlot(byte *data)
+        SlotVal<ValTyp> GetMaxValSlot(byte *data)
         {
-            auto header = CastHeader(data);
-            if (header->max_val != UNDEFINED)
+            auto header = VarlenHeader<ValTyp>::CastHeader(data);
+            auto max_val = ReadMaxVal(header);
+            if (max_val != UNDEFINED_OFFSET)
             {
-                return CastSlot(ReadSlot(data, header->max_val));
+                return CastSlot(ReadSlot(data, max_val));
             }
             else
             {
-                return SlotVal<R>{SlotValHeader<R>{0, 0}, nullptr};
+                return SlotVal<ValTyp>{SlotValHeader<ValTyp>{0, 0}, nullptr};
             }
         }
 
     public:
-        static constexpr R UNDEFINED = std::numeric_limits<R>::max();
+        static constexpr ValTyp UNDEFINED = std::numeric_limits<ValTyp>::max();
         static constexpr u32 UNDEFINED_OFFSET = std::numeric_limits<u32>::max();
 
-        BtreeVarlenLayoutLeaf() : key_offset_(sizeof(VarlenHeader)) {}
+        BtreeVarlenLayoutLeaf() : key_offset_(sizeof(VarlenHeader<ValTyp>)) {}
 
-        R Get(byte *data, const u32 count, const Key key)
+        ValTyp Get(byte *data, const u32 count, const Key key)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
@@ -339,15 +316,15 @@ namespace db7
             return UNDEFINED;
         }
 
-        void Insert(byte *data, Key key, R value)
+        void Insert(byte *data, Key key, ValTyp value)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
 
-            u32 count = CastHeader(data)->count;
+            u32 count = VarlenHeader<ValTyp>::CastHeader(data)->count;
             Key new_key = RemoveKeyPrefix(data, key);
             InsertInternal(data, count, new_key, value);
-            CastHeader(data)->count++;
+            VarlenHeader<ValTyp>::CastHeader(data)->count++;
         }
 
         bool HasSpace(byte *data, Key key)
@@ -356,7 +333,7 @@ namespace db7
             DB7_ASSERT(key.len != 0, "invalid key");
 
             Key new_key = RemoveKeyPrefix(data, key);
-            auto hdr = CastHeader(data); // TODO fix this, this can all fit into taken_space
+            auto hdr = VarlenHeader<ValTyp>::CastHeader(data); // TODO fix this, this can all fit into taken_space
             return key_offset_ + hdr->count * sizeof(Slot) + hdr->heap_size + CalcWorstCaseSize(new_key) < DB7_PAGE_SIZE;
         }
 
@@ -365,10 +342,10 @@ namespace db7
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
 
-            auto *header = CastHeader(data);
-            if (ReadMaxVal(header) == UNDEFINED)
+            auto *header = VarlenHeader<ValTyp>::CastHeader(data);
+            if (ReadMaxVal(header) == UNDEFINED_OFFSET)
                 return false; // rightmost page, no high key
-            auto *slot = ReadSlot((byte *)header, header->max_val);
+            auto *slot = ReadSlot((byte *)header, ReadMaxVal(header));
             // DB7_ASSERT((Cmp(slot, key) <= 0) == false, "node has split(this is for single thread only)"); // TODO comment
             return Cmp(slot, key) <= 0;
         }
@@ -377,16 +354,16 @@ namespace db7
          * TODO might be better to use thread local buffer for this case
          * to avoid copying objects
          */
-        Key Split(byte *left_data, byte *right_data, page_id new_pid, Key key, R value)
+        Key Split(byte *__restrict left_data, byte *__restrict right_data, ValTyp new_pid, Key key, ValTyp value)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
 
             UpdateHeapSize(right_data, 0);
 
-            auto *left_header = CastHeader(left_data);
+            auto *left_header = VarlenHeader<ValTyp>::CastHeader(left_data);
 
-            auto *right_header = CastHeader(right_data);
+            auto *right_header = VarlenHeader<ValTyp>::CastHeader(right_data);
 
             Slot *left_slots = OffsetHeader(left_data);
 
@@ -453,9 +430,9 @@ namespace db7
 
             /* append max val from left node to right */
             u64 right_max = UNDEFINED;
-            if (left_header->max_val != UNDEFINED)
+            if (ReadMaxVal(left_header) != UNDEFINED_OFFSET)
             {
-                SlotVal val = CastSlot(ReadSlot(left_data, left_header->max_val));
+                SlotVal val = CastSlot(ReadSlot(left_data, ReadMaxVal(left_header)));
                 right_max = (u64)AppendHeap(right_data, Key{static_cast<u16>(val.hdr.len), val.data}, val.hdr.result);
             }
 
@@ -488,23 +465,23 @@ namespace db7
             }
 
             /* update headers */
-            WriteHeader(right_header, new_pid, left_header->rlink, left_header->pid, right_header_count, left_header->level, right_max, right_prefix, right_prefix_len);
+            right_header->WriteHeader(new_pid, left_header->rlink, left_header->pid, right_header_count, left_header->level, right_max, right_prefix, right_prefix_len);
 
-            WriteHeader(left_header, left_header->pid, new_pid, left_header->llink, left_header_count, left_header->level, left_max, left_prefix, left_prefix_len);
+            left_header->WriteHeader(left_header->pid, new_pid, left_header->llink, left_header_count, left_header->level, left_max, left_prefix, left_prefix_len);
 
             /* encode a string (lib does the allocation) */
             // TODO can reuse existing sentinel buffer in future
             return DeepCopyEncoded(sentinel);
         }
 
-        void InitHeader(byte *data, u32 count, u8 level, page_id pid)
+        void InitHeader(byte *data, u32 count, u8 level, ValTyp pid)
         {
-            WriteHeader(data, pid, UNDEFINED, UNDEFINED, count, level, UNDEFINED, UNDEFINED_OFFSET, 0);
+            VarlenHeader<ValTyp>::WriteHeader(data, pid, UNDEFINED, UNDEFINED, count, level, UNDEFINED_OFFSET, UNDEFINED_OFFSET, 0);
         }
 
         u64 GetRLink(byte *data)
         {
-            return CastHeader(data)->rlink;
+            return VarlenHeader<ValTyp>::CastHeader(data)->rlink;
         }
     };
 }
