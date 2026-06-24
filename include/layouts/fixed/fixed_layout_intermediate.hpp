@@ -85,7 +85,7 @@ namespace db7
             ref_offset_ = AlignUp(key_offset_ + max_count_ * sizeof(KeyTyp), (u64)sizeof(ValTyp));
         }
 
-        auto Get(byte *data, const u32 count, const KeyTyp value)
+        ValTyp Get(byte *data, const u32 count, const KeyTyp value)
         {
             KeyTyp *arr = OffsetKey(data);
             u32 idx = GetIdx(arr, count, value);

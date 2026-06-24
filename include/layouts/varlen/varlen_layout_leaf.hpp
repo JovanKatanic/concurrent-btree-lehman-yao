@@ -330,7 +330,7 @@ namespace db7
 
         BtreeVarlenLayoutLeaf() : key_offset_(sizeof(VarlenHeader<ValTyp>)) {}
 
-        ValTyp Get(byte *data, const u32 count, const Key key)
+        ResultObj<ValTyp> Get(byte *data, const u32 count, const Key key)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
@@ -344,10 +344,10 @@ namespace db7
             if (found)
             {
                 SlotVal val = CastSlot(ReadSlot(data, slots[idx]));
-                return val.hdr.result;
+                return ResultObj<ValTyp>(val.hdr.result, true);
             }
 
-            return UNDEFINED;
+            return ResultObj<ValTyp>(false);
         }
 
         void Insert(byte *data, Key key, ValTyp value)

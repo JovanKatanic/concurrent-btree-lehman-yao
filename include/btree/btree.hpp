@@ -364,7 +364,7 @@ namespace db7
             return true;
         }
 
-        ValTyp InternalGet(Page *page, KeyTyp key)
+        ResultObj<ValTyp> InternalGet(Page *page, KeyTyp key)
         {
             DB7_ASSERT(page->GetId() != std::numeric_limits<page_id>::max(), "invalid pid");
             auto *data = page->GetData();
@@ -390,7 +390,7 @@ namespace db7
                 }
                 else
                 {
-                    page_id result = layout_leaf_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
+                    auto result = layout_leaf_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
 
                     if (!Unlock<LM>(page))
                         continue;
@@ -446,7 +446,7 @@ namespace db7
             return DeleteInternal(page, key);
         }
 
-        ValTyp Get(KeyTyp key)
+        ResultObj<ValTyp> Get(KeyTyp key)
         {
             TlState::Clear();
             auto *page = DropToLevel(key);

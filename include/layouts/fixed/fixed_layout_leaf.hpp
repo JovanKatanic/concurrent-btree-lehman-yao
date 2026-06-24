@@ -115,13 +115,13 @@ namespace db7
             ref_offset_ = AlignUp(key_offset_ + max_count_ * sizeof(KeyTyp), (u64)sizeof(ValTyp));
         }
 
-        ValTyp Get(byte *data, const u32 count, const KeyTyp value)
+        ResultObj<ValTyp> Get(byte *data, const u32 count, const KeyTyp value)
         {
             bool found;
             u32 idx = GetIdx(OffsetKey(data), count, value, found);
             if (found)
-                return (OffsetRef(data))[idx];
-            return BtreeNumberLayoutLeaf::UNDEFINED;
+                return ResultObj<ValTyp>((OffsetRef(data))[idx], true);
+            return ResultObj<ValTyp>(false);
         }
 
         void Insert(byte *data, KeyTyp key, ValTyp value)

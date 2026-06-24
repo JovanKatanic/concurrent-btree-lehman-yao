@@ -74,7 +74,7 @@ int main()
                 btree.Insert(strs[i], 5);
                 btree.Delete(strs[i]);
                 auto v = btree.Get(strs[i]);
-                if (v != UINT64_MAX)
+                if (v.success != false) // v.value != 5
                     throw std::runtime_error("bad");
             }
             auto t1 = std::chrono::steady_clock::now();

@@ -26,4 +26,18 @@ namespace db7
             return reinterpret_cast<BaseLyHeader<Typ> *>(data)->count;
         }
     };
+
+    template <typename Typ>
+    struct ResultObj
+    {
+        Typ value;
+
+        bool success;
+
+        ResultObj() = delete;
+
+        ResultObj(bool success) : success(success) {}
+
+        ResultObj(Typ value, bool success) : value(value), success(success) {}
+    };
 }
