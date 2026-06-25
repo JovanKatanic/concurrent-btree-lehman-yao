@@ -105,13 +105,13 @@ namespace db7::test
     };
 
     // numeric-key variant, in case you also instantiate BTreeIndex<u64, u64>
-    inline std::vector<u64> make_int_keys(u32 n)
+    inline std::vector<u64> make_shuffled_keys(u32 n, u32 seed = 1234)
     {
-        std::vector<u64> v(n);
+        std::vector<u64> keys(n);
         for (u32 i = 0; i < n; i++)
-            v[i] = i;
-        std::shuffle(v.begin(), v.end(), std::mt19937{42});
-        return v;
+            keys[i] = u64(i) + 1;
+        std::shuffle(keys.begin(), keys.end(), std::mt19937{seed});
+        return keys;
     }
 
     // ---- parallel runner --------------------------------------------------------
@@ -151,8 +151,23 @@ namespace db7::test
         unsigned n = std::thread::hardware_concurrency();
         return n ? n : 4;
     }
+
+    template <typename Fn>
+    inline double time_section(const char *label, Fn &&fn)
+    {
+        auto t0 = std::chrono::steady_clock::now();
+        fn();
+        auto t1 = std::chrono::steady_clock::now();
+        double ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
+        std::fprintf(stderr, "[%s] %.2f ms  (%.0f ns)\n", label, ns / 1e6, ns);
+        return ns;
+    }
 } // namespace db7::test
 
 int test_single_thread();
 int test_concurrent_disjoint();
 int test_concurrent_shared();
+
+int test_single_thread_fixed();
+int test_concurrent_disjoint_fixed();
+int test_concurrent_shared_fixed();

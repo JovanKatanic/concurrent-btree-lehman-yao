@@ -162,10 +162,9 @@ namespace db7
 
             u32 left_header_count = mid;
             u32 right_header_count = left_header->count - mid;
-            ResultObj<KeyTyp> result;
             if (key < sentinel)
             {
-                result = InsertInternal(left_data, left_header_count, key, value);
+                auto result = InsertInternal(left_data, left_header_count, key, value);
                 if (!result.success)
                 {
                     return {result.message, false};
@@ -174,7 +173,7 @@ namespace db7
             }
             else
             {
-                result = InsertInternal(right_data, right_header_count, key, value);
+                auto result = InsertInternal(right_data, right_header_count, key, value);
                 if (!result.success)
                 {
                     return {result.message, false};

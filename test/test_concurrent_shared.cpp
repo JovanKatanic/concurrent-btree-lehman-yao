@@ -61,7 +61,7 @@ static void shared_chaos(unsigned T)
                     bt.Insert(ks[i], LEGAL_VALUE);
                     break;
                 case 1:
-                    //bt.Delete(ks[i]);
+                    bt.Delete(ks[i]);
                     break;
                 default: {
                     auto v = bt.Get(ks[i]);

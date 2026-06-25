@@ -22,16 +22,6 @@
 using namespace db7;
 using namespace db7::test;
 
-// 1..N shuffled with a fixed seed (deterministic across runs).
-static std::vector<u64> make_shuffled_keys(u32 n, u32 seed = 1234)
-{
-    std::vector<u64> keys(n);
-    for (u32 i = 0; i < n; i++)
-        keys[i] = u64(i) + 1;
-    std::shuffle(keys.begin(), keys.end(), std::mt19937{seed});
-    return keys;
-}
-
 // insert -> present with correct value -> delete -> absent.
 static void test_insert_get_delete()
 {
@@ -155,9 +145,9 @@ static void test_insert_same_elements()
 
 int test_single_thread_fixed()
 {
-    test_insert_get_delete();
-    test_missing_key();
-    test_partial_delete();
-    test_insert_same_elements();
+    time_section("insert_get_delete", test_insert_get_delete);
+    time_section("missing_key", test_missing_key);
+    time_section("partial_delete", test_partial_delete);
+    time_section("insert_same_elements", test_insert_same_elements);
     return report("single_thread_fixed");
 }

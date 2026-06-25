@@ -129,9 +129,9 @@ static void test_insert_same_elements()
 
 int test_single_thread()
 {
-    test_insert_get_delete();
-    test_missing_key();
-    test_partial_delete();
-    test_insert_same_elements();
-    return report("single_thread");
+    time_section("insert_get_delete", test_insert_get_delete);
+    time_section("missing_key", test_missing_key);
+    time_section("partial_delete", test_partial_delete);
+    time_section("insert_same_elements", test_insert_same_elements);
+    return report("single_thread_fixed");
 }
