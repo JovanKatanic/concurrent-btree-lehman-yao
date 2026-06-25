@@ -67,15 +67,19 @@ namespace db7
             ReleaseNode<LockMode::None>(new_root_page);
         }
 
-        KeyTyp SplitLeaf(byte *data, page_id &new_pid, KeyTyp key, ValTyp value)
+        ResultObj<KeyTyp> SplitLeaf(byte *data, page_id &new_pid, KeyTyp key, ValTyp value)
         {
+            auto result = layout_leaf_.Get(data, BaseLyHeader<ValTyp>::GetCount(data), key);
+            if (result.success)
+                return {"Key already exists\0", false};
+
             auto *right_page = ReserveNode();
 
             new_pid = right_page->GetId();
 
             byte *right_data = right_page->GetData();
 
-            KeyTyp sentinel = layout_leaf_.Split(data, right_data, new_pid, key, value);
+            ResultObj<KeyTyp> sentinel = layout_leaf_.Split(data, right_data, new_pid, key, value);
 
             ReleaseNode<LockMode::None>(right_page);
 
@@ -157,16 +161,15 @@ namespace db7
 
             Page *page = GetNode<LockMode::None>(pid);
             auto *data = page->GetData();
-            u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
 
             do
             {
                 DB7_ASSERT(pid != std::numeric_limits<page_id>::max(), "invalid pid");
-                DB7_ASSERT(level == BaseLyHeader<ValTyp>::GetLevel(data), "invalid level node");
 
                 constexpr LockMode LM = LockMode::Optimistic;
                 Lock<LM>(page);
 
+                u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
                 if (level <= 0)
                 {
                     if (!Unlock<LM>(page))
@@ -267,7 +270,7 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-        bool InsertInternal(Page *page, KeyTyp key, ValTyp value)
+        ResultObj<void> InsertInternal(Page *page, KeyTyp key, ValTyp value)
         {
             Lock<LockMode::Write>(page);
 
@@ -277,15 +280,20 @@ namespace db7
 
             if (layout_leaf_.HasSpace(data, key))
             {
-                layout_leaf_.Insert(data, key, value);
+                auto result = layout_leaf_.Insert(data, key, value);
                 ReleaseNode<LockMode::Write>(page);
+                return result;
             }
             else
             {
                 page_id new_pid;
-                KeyTyp sentinel = SplitLeaf(data, new_pid, key, value);
+                auto split_result = SplitLeaf(data, new_pid, key, value);
+                KeyTyp sentinel = split_result.value;
                 u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
                 ReleaseNode<LockMode::Write>(page);
+
+                if (!split_result.success)
+                    return ResultObj<void>::Fail(split_result.message);
 
                 if (TlState::IsEmpty())
                 {
@@ -308,10 +316,10 @@ namespace db7
                 }
             }
 
-            return true;
+            return ResultObj<void>::Ok();
         }
 
-        bool PropagateInsert(KeyTyp key, page_id value)
+        ResultObj<void> PropagateInsert(KeyTyp key, page_id value)
         {
             while (!TlState::IsEmpty())
             {
@@ -335,9 +343,7 @@ namespace db7
                 {
                     page_id new_pid;
 
-                    // KeyTyp old_key = key;
                     key = SplitInter(data, new_pid, key, value);
-                    // delete[] old_key.encoded;
 
                     value = new_pid;
                     u8 level = BaseLyHeader<ValTyp>::GetLevel(data);
@@ -361,7 +367,7 @@ namespace db7
                 }
             }
 
-            return true;
+            return ResultObj<void>::Ok();
         }
 
         ResultObj<ValTyp> InternalGet(Page *page, KeyTyp key)
@@ -404,7 +410,7 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
-        bool DeleteInternal(Page *page, KeyTyp key)
+        ResultObj<void> DeleteInternal(Page *page, KeyTyp key)
         {
             Lock<LockMode::Write>(page);
 
@@ -412,11 +418,11 @@ namespace db7
 
             byte *data = page->GetData();
 
-            layout_leaf_.Delete(data, key);
+            auto result = layout_leaf_.Delete(data, key);
 
             Unlock<LockMode::Write>(page);
 
-            return true;
+            return result;
         }
 
     public:
@@ -432,14 +438,14 @@ namespace db7
 
         ~BTreeIndex() = default;
 
-        bool Insert(KeyTyp key, ValTyp value)
+        ResultObj<void> Insert(KeyTyp key, ValTyp value)
         {
             TlState::Clear();
             Page *page = DropToLevel(key);
             return InsertInternal(page, key, value);
         }
 
-        bool Delete(KeyTyp key)
+        ResultObj<void> Delete(KeyTyp key)
         {
             TlState::Clear();
             Page *page = DropToLevel(key);

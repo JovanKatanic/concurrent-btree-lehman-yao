@@ -75,16 +75,17 @@ namespace db7
             return arr[idx];
         }
 
-        void InsertInternal(byte *data, u32 count, KeyTyp key, ValTyp value)
+        ResultObj<void> InsertInternal(byte *data, u32 count, KeyTyp key, ValTyp value)
         {
             bool found = false;
             u32 idx = count == 0 ? 0 : GetIdx(OffsetKey(data), count, key, found);
             if (found)
             {
-                throw std::runtime_error("Key already exists");
+                return ResultObj<void>::Fail("Key already exists\0");
             }
             ShiftRightInsert(OffsetKey(data), count, idx, key);
             ShiftRightInsert(OffsetRef(data), count, idx, value);
+            return ResultObj<void>::Ok();
         }
 
         KeyTyp ReadMaxVal(NumberHeader<ValTyp> *header)
@@ -92,16 +93,17 @@ namespace db7
             return static_cast<KeyTyp>(header->max_val);
         }
 
-        void DeleteInternal(byte *data, u32 count, KeyTyp key)
+        ResultObj<void> DeleteInternal(byte *data, u32 count, KeyTyp key)
         {
             bool found = false;
             u32 idx = count == 0 ? 0 : GetIdx(OffsetKey(data), count, key, found);
             if (!found)
             {
-                throw std::runtime_error("Key not found");
+                return ResultObj<void>::Fail("Key not found\0");
             }
             ShiftLeftDelete(OffsetKey(data), count, idx);
             ShiftLeftDelete(OffsetRef(data), count, idx);
+            return ResultObj<void>::Ok();
         }
 
     public:
@@ -120,15 +122,17 @@ namespace db7
             bool found;
             u32 idx = GetIdx(OffsetKey(data), count, value, found);
             if (found)
-                return ResultObj<ValTyp>((OffsetRef(data))[idx], true);
-            return ResultObj<ValTyp>(false);
+                return {(OffsetRef(data))[idx], true};
+            return {"Key not found\0", false};
         }
 
-        void Insert(byte *data, KeyTyp key, ValTyp value)
+        ResultObj<void> Insert(byte *data, KeyTyp key, ValTyp value)
         {
             u32 count = NumberHeader<ValTyp>::CastHeader(data)->count;
-            InsertInternal(data, count, key, value);
-            NumberHeader<ValTyp>::CastHeader(data)->count++;
+            auto result = InsertInternal(data, count, key, value);
+            if (result.success)
+                NumberHeader<ValTyp>::CastHeader(data)->count++;
+            return result;
         }
 
         bool HasSpace(byte *data, KeyTyp key)
@@ -144,7 +148,7 @@ namespace db7
             return key >= ReadMaxVal(header);
         }
 
-        KeyTyp Split(byte *left_data, byte *right_data, page_id new_pid, KeyTyp key, ValTyp value)
+        ResultObj<KeyTyp> Split(byte *left_data, byte *right_data, page_id new_pid, KeyTyp key, ValTyp value)
         {
             auto *left_header = NumberHeader<ValTyp>::CastHeader(left_data);
 
@@ -158,15 +162,23 @@ namespace db7
 
             u32 left_header_count = mid;
             u32 right_header_count = left_header->count - mid;
-
+            ResultObj<KeyTyp> result;
             if (key < sentinel)
             {
-                InsertInternal(left_data, left_header_count, key, value);
+                result = InsertInternal(left_data, left_header_count, key, value);
+                if (!result.success)
+                {
+                    return {result.message, false};
+                }
                 left_header_count++;
             }
             else
             {
-                InsertInternal(right_data, right_header_count, key, value);
+                result = InsertInternal(right_data, right_header_count, key, value);
+                if (!result.success)
+                {
+                    return {result.message, false};
+                }
                 right_header_count++;
             }
 
@@ -174,7 +186,7 @@ namespace db7
 
             left_header->WriteHeader(left_header->pid, new_pid, left_header->llink, left_header_count, left_header->level, sentinel);
 
-            return sentinel;
+            return {sentinel, true};
         }
 
         void InitHeader(byte *data, u32 count, u8 level, page_id pid)
@@ -187,11 +199,13 @@ namespace db7
             return NumberHeader<ValTyp>::CastHeader(data)->rlink;
         }
 
-        void Delete(byte *data, KeyTyp key)
+        ResultObj<void> Delete(byte *data, KeyTyp key)
         {
             u32 count = NumberHeader<ValTyp>::CastHeader(data)->count;
-            DeleteInternal(data, count, key);
-            NumberHeader<ValTyp>::CastHeader(data)->count--;
+            auto result = DeleteInternal(data, count, key);
+            if (result.success)
+                NumberHeader<ValTyp>::CastHeader(data)->count--;
+            return result;
         }
     };
 };

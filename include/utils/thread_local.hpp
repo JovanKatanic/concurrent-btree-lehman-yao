@@ -44,7 +44,7 @@ namespace db7
         }
     };
 
-    constexpr u64 MAX_OPTIMISTIC_TRIES = 1;
+    constexpr u64 MAX_OPTIMISTIC_TRIES = 0;
 
     enum class LockMode
     {

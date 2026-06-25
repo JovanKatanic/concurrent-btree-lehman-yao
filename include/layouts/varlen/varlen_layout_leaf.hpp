@@ -166,6 +166,70 @@ namespace db7
             DB7_UNREACHABLE();
         }
 
+        void CompactHeap(byte *data, Slot *slots, u32 count)
+        {
+            auto *header = VarlenHeader<ValTyp>::CastHeader(data);
+
+            // snapshot fence + prefix BEFORE moving anything
+            bool has_max = ReadMaxVal(header) != UNDEFINED_OFFSET;
+            SlotValHeader<ValTyp> max_hdr{};
+            std::unique_ptr<byte[]> max_data;
+            if (has_max)
+            {
+                SlotVal<ValTyp> mv = CastSlot(ReadSlot(data, ReadMaxVal(header)));
+                max_hdr = mv.hdr;
+                max_data = std::make_unique<byte[]>(mv.hdr.len);
+                std::memcpy(max_data.get(), mv.data, mv.hdr.len);
+            }
+            bool has_prefix = header->prefix_offset != UNDEFINED_OFFSET;
+            std::unique_ptr<byte[]> prefix_copy = CopyPrefixSlot(data);
+            u16 prefix_len = header->prefix_len;
+
+            u32 indices[DB7_MAX_SLOTS_PER_PAGE]; // TODO move to heap
+            for (u32 i = 0; i < count; i++)
+                indices[i] = i;
+
+            std::sort(indices, indices + count, [&](u32 a, u32 b)
+                      { return slots[a].offset > slots[b].offset; });
+
+            u32 write_pos = 0;
+            for (u32 i = 0; i < count; i++)
+            {
+                u32 idx = indices[i];
+                SlotVal<ValTyp> val = CastSlot(ReadSlot(data, slots[idx]));
+
+                u32 entry_size = sizeof(SlotValHeader<ValTyp>) + val.hdr.len; // no prefix_len
+                u32 off = AlignDown(DB7_PAGE_SIZE - write_pos - entry_size,
+                                    alignof(SlotValHeader<ValTyp>));
+
+                std::memmove(data + off + sizeof(SlotValHeader<ValTyp>),
+                             val.data, val.hdr.len); // verbatim
+                auto *new_hdr = CastSlotHeader(data + off);
+                new_hdr->len = val.hdr.len;
+                new_hdr->result = val.hdr.result;
+
+                slots[idx].offset = off;
+                write_pos = DB7_PAGE_SIZE - off;
+            }
+
+            UpdateHeapSize(data, write_pos);
+
+            // re-append fence + prefix below the packed data, same order as Split
+            if (has_max)
+            {
+                u32 off = AppendHeap(data, Key{(u16)max_hdr.len, max_data.get()}, max_hdr.result);
+                header->max_val = off; // map to your real field name
+            }
+            if (has_prefix)
+            {
+                u32 off = ReserveSlotRaw(data, prefix_len);
+                std::memcpy(data + off, prefix_copy.get(), prefix_len);
+                header->prefix_offset = off;
+            }
+
+            header->dead_space = 0;
+        }
+
         void CompactHeap(byte *data, Slot *slots, u32 count, u32 prefix_len)
         {
             // sort slot indices by offset descending (highest first = end of page)
@@ -221,26 +285,29 @@ namespace db7
         {
             auto *header = VarlenHeader<ValTyp>::CastHeader(data);
             u16 len = header->prefix_len;
-            DB7_ASSERT(key.enc_len >= len, "key shorter than page prefix");
+            DB7_ASSERT(key.len >= len, "key shorter than page prefix");
             return Key{static_cast<u16>(key.len - len), key.data + len};
         }
 
-        void InsertInternal(byte *data, u32 count, Key key, ValTyp value)
+        ResultObj<void> InsertInternal(byte *data, u32 count, Key key, ValTyp value)
         {
-            Slot *slots = OffsetHeader(data);
-
-            /* Insert to heap */
-            u32 off = AppendHeap(data, key, value);
-
             /* Insert slot */
             bool found = false;
             u32 idx = GetIdx(data, count, key, found);
             if (found)
             {
-                throw std::runtime_error("Key already exists");
+                return ResultObj<void>::Fail("Key already exists\0");
             }
+
+            Slot *slots = OffsetHeader(data);
+
+            /* Insert to heap */
+            u32 off = AppendHeap(data, key, value);
+
             Slot slot = Slot{off};
             ShiftRightInsert(slots, count, idx, slot); // TODO this should increment header count
+
+            return ResultObj<void>::Ok();
         }
 
         u32 ReadMaxVal(VarlenHeader<ValTyp> *header)
@@ -298,7 +365,7 @@ namespace db7
             }
         }
 
-        void DeleteInternal(byte *data, Key key)
+        ResultObj<void> DeleteInternal(byte *data, Key key)
         {
             auto *header = VarlenHeader<ValTyp>::CastHeader(data);
             Slot *slots = OffsetHeader(data);
@@ -308,7 +375,7 @@ namespace db7
             u32 idx = GetIdx(data, count, key, found);
             if (!found)
             {
-                throw std::runtime_error("Key not found");
+                return ResultObj<void>::Fail("Key not found\0");
             }
 
             SlotValHeader<ValTyp> *hdr = CastSlotHeader(ReadSlot(data, slots[idx]));
@@ -321,7 +388,9 @@ namespace db7
             header->count = count;
 
             if (header->dead_space > DB7_PAGE_SIZE / 4)
-                CompactHeap(data, slots, count, header->prefix_len);
+                CompactHeap(data, slots, count);
+
+            return ResultObj<void>::Ok();
         }
 
     public:
@@ -344,21 +413,23 @@ namespace db7
             if (found)
             {
                 SlotVal val = CastSlot(ReadSlot(data, slots[idx]));
-                return ResultObj<ValTyp>(val.hdr.result, true);
+                return {val.hdr.result, true};
             }
 
-            return ResultObj<ValTyp>(false);
+            return {"Key not found\0", false};
         }
 
-        void Insert(byte *data, Key key, ValTyp value)
+        ResultObj<void> Insert(byte *data, Key key, ValTyp value)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
 
             u32 count = VarlenHeader<ValTyp>::CastHeader(data)->count;
             Key new_key = RemoveKeyPrefix(data, key);
-            InsertInternal(data, count, new_key, value);
-            VarlenHeader<ValTyp>::CastHeader(data)->count++;
+            auto result = InsertInternal(data, count, new_key, value);
+            if (result.success)
+                VarlenHeader<ValTyp>::CastHeader(data)->count++;
+            return result;
         }
 
         bool HasSpace(byte *data, Key key)
@@ -388,12 +459,10 @@ namespace db7
          * TODO might be better to use thread local buffer for this case
          * to avoid copying objects
          */
-        Key Split(byte *__restrict left_data, byte *__restrict right_data, ValTyp new_pid, Key key, ValTyp value)
+        ResultObj<Key> Split(byte *__restrict left_data, byte *__restrict right_data, ValTyp new_pid, Key key, ValTyp value)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
-
-            UpdateHeapSize(right_data, 0);
 
             auto *left_header = VarlenHeader<ValTyp>::CastHeader(left_data);
 
@@ -402,6 +471,8 @@ namespace db7
             Slot *left_slots = OffsetHeader(left_data);
 
             Slot *right_slots = OffsetHeader(right_data);
+
+            UpdateHeapSize(right_data, 0);
 
             u32 count = left_header->count;
             DB7_ASSERT(count != 0, "nothing to copy");
@@ -487,15 +558,21 @@ namespace db7
             /* finally insert main key */
             u32 left_header_count = split;
             u32 right_header_count = left_header->count - split;
+            ResultObj<void> result;
             if (Cmp(sentinel, key) > 0)
             {
                 auto new_key = OffsetCommonPrefix(key, left_prefix_len);
-                InsertInternal(left_data, left_header_count++, new_key, value);
+                result = InsertInternal(left_data, left_header_count++, new_key, value);
             }
             else
             {
                 auto new_key = OffsetCommonPrefix(key, right_prefix_len);
-                InsertInternal(right_data, right_header_count++, new_key, value);
+                result = InsertInternal(right_data, right_header_count++, new_key, value);
+            }
+
+            if (!result.success)
+            {
+                return {result.message, false};
             }
 
             /* update headers */
@@ -505,7 +582,7 @@ namespace db7
 
             /* encode a string (lib does the allocation) */
             // TODO can reuse existing sentinel buffer in future
-            return DeepCopyEncoded(sentinel);
+            return {DeepCopyEncoded(sentinel), true};
         }
 
         void InitHeader(byte *data, u32 count, u8 level, ValTyp pid)
@@ -518,13 +595,13 @@ namespace db7
             return VarlenHeader<ValTyp>::CastHeader(data)->rlink;
         }
 
-        void Delete(byte *data, Key key)
+        ResultObj<void> Delete(byte *data, Key key)
         {
             DB7_ASSERT(key.data != nullptr, "invalid key");
             DB7_ASSERT(key.len != 0, "invalid key");
 
             Key new_key = RemoveKeyPrefix(data, key);
-            DeleteInternal(data, new_key);
+            return DeleteInternal(data, new_key);
         }
     };
 }

@@ -289,7 +289,12 @@ namespace db7
             Slot *slots = OffsetHeader(data);
             u32 idx = GetIdx(data, count, new_key);
 
-            DB7_ASSERT(idx > 0, "key routes before leftmost entry");
+            // DB7_ASSERT(idx > 0, "key routes before leftmost entry");
+            if (idx == 0)
+            {
+                return UNDEFINED;
+            }
+
             SlotVal val = CastSlot(ReadSlot(data, slots[idx - 1]));
             return val.hdr.result;
         }
@@ -328,7 +333,7 @@ namespace db7
             if (ReadMaxVal(header) == UNDEFINED_OFFSET)
                 return false; // rightmost page, no high key
             auto *slot = ReadSlot((byte *)header, ReadMaxVal(header));
-            DB7_ASSERT((Cmp(slot, key) <= 0) == false, "node has split(this is for single thread only)"); // TODO comment
+            // DB7_ASSERT((Cmp(slot, key) <= 0) == false, "node has split(this is for single thread only)"); // TODO comment
             return Cmp(slot, key) <= 0;
         }
 

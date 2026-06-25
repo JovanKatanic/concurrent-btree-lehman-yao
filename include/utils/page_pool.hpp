@@ -29,7 +29,11 @@ namespace db7
             delete[] pages_;
         }
 
-        Page *Reserve() { return pages_ + (next_free_++); }
+        Page *Reserve()
+        {
+            DB7_ASSERT(next_free_.load() < 100'000, "out of mem");
+            return pages_ + (next_free_++);
+        }
 
         Page *Get(u64 pid)
         {
